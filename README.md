@@ -20,13 +20,13 @@ This Bash script facilitates the setup and management of a Minecraft server on U
 2. Make the script executable by running:
 
    ```bash
-   chmod +x minecraft_server.sh
+   chmod +x mcserver.sh
    ```
 
 3. Run the script as root or with sudo privileges:
 
    ```bash
-   sudo ./minecraft_server.sh
+   sudo ./mcserver.sh
    ```
 
 Follow the on-screen prompts to set up and configure your Minecraft server.
