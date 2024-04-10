@@ -48,7 +48,7 @@ Follow the on-screen instructions to perform the desired actions.
 
 ## License
 
-This project is open-source and released under the [MIT License](LICENSE).
+This repo is released under the [MIT License](LICENSE).
 
 ## Contributions
 
