@@ -184,17 +184,22 @@ function restart_server {
 
 # Function to check status of Minecraft server
 function status {
-    if [ ! -f "/etc/systemd/system/minecraft@mcserver.service" ]; then
-        echo ".:: Not installed!"
-        return
+    local server_properties="/opt/minecraft/server.properties"
+    if [ ! -f "$server_properties" ]; then
+        local server_port=25565
+    else
+        local server_port=$(grep '^server-port=' "$server_properties" | cut -d '=' -f 2)
+        if [ -z "$server_port" ]; then
+            server_port=25565
+        fi
     fi
 
     local server_status=$(systemctl is-active "minecraft@mcserver")
     if [ "$server_status" = "active" ]; then
         local ip_address=$(hostname -I | cut -d ' ' -f1)
-        echo ".:: Active  | Address: ${ip_address}:25565"
+        echo ".:: Active  | Address: ${ip_address}:${server_port}"
     else
-        echo ".:: Deactive"
+        echo ".:: Inactive"
     fi
 }
 
