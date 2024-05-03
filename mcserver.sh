@@ -1,6 +1,7 @@
 #!/bin/bash
 
 mcserver_dir="/opt/minecraft"
+verbose_mode=false
 
 if [ -t 1 ]; then
     # Define colors
@@ -9,7 +10,7 @@ if [ -t 1 ]; then
     YELLOW="\033[0;33m"
     BLUE="\033[0;34m"
     CYAN="\033[0;36m"
-    white="\033[1;37m"
+    WHITE="\033[1;37m"
     NC="\033[0m" # No Color
 else
     RED=""
@@ -17,9 +18,17 @@ else
     YELLOW=""
     BLUE=""
     CYAN=""
-    white=""
+    WHITE=""
     NC=""
 fi
+
+execute() {
+    if [ "$verbose_mode" = true ]; then
+        "$@"
+    else
+        "$@" >/dev/null 2>&1
+    fi
+}
 
 # Function to display error message and exit
 function display_error {
@@ -85,17 +94,31 @@ function _spinner() {
 function start_spinner {
     # $1 : msg to display
     _message=$1
-    _spinner "start" "${_message}" &
-    # set global spinner pid
-    _sp_pid=$!
-    disown
+    if [ "$verbose_mode" = false ]; then
+        _spinner "start" "${_message}" &
+        _sp_pid=$!
+        disown
+    else
+        echo -e "${YELLOW}[START]${NC} ${_message}"
+    fi
 }
 
 function stop_spinner {
     # $1 : command exit status
-    _spinner "stop" "${_message}" $1 $_sp_pid "${2}"
-    unset _message
-    unset _sp_pid
+    if [ "$verbose_mode" = false ]; then
+        _spinner "stop" "${_message}" $1 $_sp_pid "${2}"
+        unset _message
+        unset _sp_pid
+    else
+        if [[ $1 -eq 0 ]]; then
+            echo -e "${GREEN}[DONE]${NC} ${_message}"
+        else
+            echo -e "${RED}[FAILED]${NC} ${_message}"
+            if [[ -n "${2}" ]]; then
+                echo -e "${RED}└─► ${2}${NC}"
+            fi
+        fi
+    fi
 }
 
 # Function to validate if a package is installed
@@ -109,7 +132,7 @@ function install_package {
     local package_name=$1
     if ! check_package_installed "$package_name"; then
         start_spinner "Installing $package_name"
-        apt-get install -y "$package_name" >/dev/null 2>&1
+        execute apt-get install -y "$package_name"
         stop_spinner $?
     fi
 }
@@ -120,15 +143,15 @@ function install_or_update_java {
 
     if [ -z "$java_version" ]; then
         start_spinner "Java not found. Installing JDK 22"
-        wget -O /tmp/jdk-22_linux-x64_bin.deb https://download.oracle.com/java/22/latest/jdk-22_linux-x64_bin.deb >/dev/null 2>&1
-        dpkg -i /tmp/jdk-22_linux-x64_bin.deb >/dev/null 2>&1
-        rm /tmp/jdk-22_linux-x64_bin.deb
+        execute wget -O /tmp/jdk-22_linux-x64_bin.deb https://download.oracle.com/java/22/latest/jdk-22_linux-x64_bin.deb
+        execute dpkg -i /tmp/jdk-22_linux-x64_bin.deb
+        execute rm /tmp/jdk-22_linux-x64_bin.deb
         stop_spinner $?
     elif [[ "$java_version" != 22* ]]; then
         start_spinner "Java version $java_version found. Updating to JDK 22"
-        wget -O /tmp/jdk-22_linux-x64_bin.deb https://download.oracle.com/java/22/latest/jdk-22_linux-x64_bin.deb >/dev/null 2>&1
-        dpkg -i /tmp/jdk-22_linux-x64_bin.deb >/dev/null 2>&1
-        rm /tmp/jdk-22_linux-x64_bin.deb
+        execute wget -O /tmp/jdk-22_linux-x64_bin.deb https://download.oracle.com/java/22/latest/jdk-22_linux-x64_bin.deb
+        execute dpkg -i /tmp/jdk-22_linux-x64_bin.deb
+        execute rm /tmp/jdk-22_linux-x64_bin.deb
         stop_spinner $?
     fi
 }
@@ -175,8 +198,8 @@ function update_minecraft {
     if [[ "$current_version" != "$latest_version" ]]; then
         stop_spinner $?
         start_spinner "New version available: $latest_version | Updating ..."
-        wget -O "$mcserver_dir/minecraft_server.jar" "$(get_minecraft_server_url "$latest_version")" >/dev/null 2>&1
-        systemctl restart "minecraft@mcserver"
+        execute wget -O "$mcserver_dir/minecraft_server.jar" "$(get_minecraft_server_url "$latest_version")"
+        execute systemctl restart "minecraft@mcserver"
         stop_spinner $?
     else
         stop_spinner 1 "Server is already up to date."
@@ -184,8 +207,8 @@ function update_minecraft {
 }
 
 function setup_server {
-    start_spinner "check $mcserver_dir"
-    if [ -f "$mcserver_dir/minecraft_server.jar" ]; then
+    start_spinner "check path"
+    if [ "$is_server_installed" = true ]; then
         stop_spinner 1 "Minecraft server is already installed. Setup aborted."
         return 1
     fi
@@ -193,8 +216,8 @@ function setup_server {
 
     # Update system packages
     start_spinner "apt-get update & apt-get upgrade"
-    apt-get update >/dev/null 2>&1
-    apt-get upgrade -y >/dev/null 2>&1
+    execute apt-get update
+    execute apt-get upgrade -y
     stop_spinner $?
 
     # Install required packages
@@ -207,19 +230,19 @@ function setup_server {
     # Allow TCP connections on port 25565
     start_spinner "Allow TCP connections on port 25565"
     if ! ufw status | grep -q "25565"; then
-        ufw allow 25565/tcp
+        execute ufw allow 25565/tcp
     fi
     stop_spinner $?
 
     # Interactive setup
-    prompt_user "Enter Minecraft version (default: latest)" minecraft_version
+    prompt_user "Enter minecraft version (default: latest)" minecraft_version
     minecraft_version=${minecraft_version:-"latest"}
 
     prompt_user "Enter allocated memory (in MB, default: 1024)" allocated_memory
     allocated_memory=${allocated_memory:-1024}
 
     # Create server directory and download server files
-    start_spinner "Downloading Minecraft server version $minecraft_version..."
+    start_spinner "Downloading minecraft server version $minecraft_version..."
     mkdir -p "$mcserver_dir"
     if [[ $? -eq 1 ]]; then
         stop_spinner 1 "Failed to create server directory $mcserver_dir."
@@ -228,7 +251,7 @@ function setup_server {
     cd "$mcserver_dir"
 
     server_download_url=$(get_minecraft_server_url "$minecraft_version")
-    wget -O minecraft_server.jar "$server_download_url" >/dev/null 2>&1
+    execute wget -O minecraft_server.jar "$server_download_url"
     if [[ $? -eq 1 ]]; then
         stop_spinner 1 "Failed to download server files."
         return 1
@@ -263,8 +286,8 @@ WantedBy=multi-user.target
 EOF
 
     # Reload systemd daemon and start Minecraft service
-    systemctl daemon-reload
-    systemctl enable --now "minecraft@mcserver" >/dev/null 2>&1
+    execute systemctl daemon-reload
+    execute systemctl enable --now "minecraft@mcserver"
 
     # Automatically restart server daily
     cat <<EOF >"$mcserver_dir/dailyrestart.sh"
@@ -297,34 +320,49 @@ EOF
 # Function to uninstall a server
 function uninstall_server {
     start_spinner "Uninstalling ..."
-    systemctl stop "minecraft@mcserver" >/dev/null 2>&1
-    systemctl disable --now "minecraft@mcserver" >/dev/null 2>&1
-    rm "/etc/systemd/system/minecraft@mcserver.service" >/dev/null 2>&1
-    screen -ls | grep "mc-server" | awk '{print $1}' | xargs -I{} screen -X -S {} quit
-    rm -rf $mcserver_dir
-    systemctl daemon-reload
+    execute systemctl stop "minecraft@mcserver"
+    execute systemctl disable --now "minecraft@mcserver"
+    execute rm "/etc/systemd/system/minecraft@mcserver.service"
+    execute screen -ls | grep "mc-server" | awk '{print $1}' | xargs -I{} screen -X -S {} quit
+    execute rm -rf $mcserver_dir
+    execute systemctl daemon-reload
     stop_spinner $?
 }
 
 # Function to start Minecraft server
 function start_server {
     start_spinner "Starting ..."
-    systemctl start "minecraft@mcserver"
+    execute systemctl start "minecraft@mcserver"
     stop_spinner $?
 }
 
 # Function to stop Minecraft server
 function stop_server {
     start_spinner "Stoping ..."
-    systemctl stop "minecraft@mcserver"
+    execute systemctl stop "minecraft@mcserver"
     stop_spinner $?
 }
 
 # Function to restart Minecraft server
 function restart_server {
     start_spinner "Restarting ..."
-    systemctl restart "minecraft@mcserver"
+    execute systemctl restart "minecraft@mcserver"
     stop_spinner $?
+}
+
+function status {
+    if [ -f "$mcserver_dir/minecraft_server.jar" ]; then
+        is_server_installed=true
+    else
+        is_server_installed=false
+    fi
+
+    local server_status=$(systemctl is-active "minecraft@mcserver")
+    if [ "$server_status" = "active" ]; then
+        is_server_active=true
+    else
+        is_server_active=false
+    fi
 }
 
 # Function to check status of Minecraft server
@@ -332,7 +370,7 @@ function server_info {
     local server_properties="$mcserver_dir/server.properties"
 
     local minecraft_installed="${RED}● Not Installed${NC}"
-    if [ -f "$mcserver_dir/minecraft_server.jar" ]; then
+    if [ "$is_server_installed" = true ]; then
         minecraft_installed="${GREEN}● Installed${NC}"
     fi
 
@@ -345,8 +383,7 @@ function server_info {
         fi
     fi
 
-    local server_status=$(systemctl is-active "minecraft@mcserver")
-    if [ "$server_status" = "active" ]; then
+    if [ "$is_server_active" = true ]; then
         local ip_address=$(hostname -I | cut -d ' ' -f1)
         echo -e "${BLUE}.:: Installation Status:${NC} $minecraft_installed"
         echo -e "${BLUE}.:: Server Status:${NC} ${GREEN}● Active${NC}"
@@ -356,11 +393,15 @@ function server_info {
         echo -e "${BLUE}.:: Installation Status:${NC} $minecraft_installed"
         echo -e "${BLUE}.:: Server Status:${NC} ${RED}● Inactive${NC}"
     fi
+
+    if [ "$verbose_mode" = true ]; then
+        echo -e "${YELLOW}Debug Mode: ● Active${NC}"
+    fi
 }
 
 function display_note {
     local terminal_width=$(tput cols)
-    local note="${YELLOW}Note: You can update server properties from the location /opt/minecraft/server.properties. After making changes, remember to restart the Minecraft server for the updates to take effect.${NC}"
+    local note="${YELLOW}Note: You can update server properties from the location ${mcserver_dir}/server.properties. After making changes, remember to restart the minecraft server for the updates to take effect.${NC}"
 
     if [ "$terminal_width" -lt ${#colored_note} ]; then
         echo -e "${note:0:$terminal_width-3}..."
@@ -402,13 +443,75 @@ function update_memory {
     sed -i "s/-Xmx[0-9]*M/-Xmx${allocated_memory}M/" "/etc/systemd/system/minecraft@mcserver.service"
     sed -i "s/-Xms[0-9]*M/-Xms${allocated_memory}M/" "/etc/systemd/system/minecraft@mcserver.service"
 
-    systemctl daemon-reload
-    systemctl restart "minecraft@mcserver"
+    execute systemctl daemon-reload
+    execute systemctl restart "minecraft@mcserver"
 
     stop_spinner $?
 }
 
-function main_menu {
+function menu {
+    local install_uninstall
+    if [ "$is_server_installed" = true ]; then
+        local start_stop
+        if [ "$is_server_active" = true ]; then
+            start_stop="Stop"
+        else
+            start_stop="Start"
+        fi
+        echo -e "${CYAN}1.$NC Uninstall"
+        echo -e "${CYAN}2.$NC $start_stop"
+        echo -e "${CYAN}3.$NC Restart"
+        echo -e "${CYAN}4.$NC Update Allocated Memory"
+        echo -e "${CYAN}5.$NC Daily Server Restart (Currently $(get_cronjob_status))"
+        echo -e "${CYAN}6.$NC Update Minecraft Server"
+        if [ "$is_server_active" = true ]; then
+            echo -e "${CYAN}7.$NC Open Screen (logs)"
+        fi
+        echo -e "${RED}0. Exit$NC"
+        echo $'\n'
+        display_note
+        echo $'\n'
+        prompt_user "Enter your choice" choice
+        case $choice in
+        1) uninstall_server ;;
+        2)
+            if [ "$is_server_active" = true ]; then
+                stop_server
+            else
+                start_server
+            fi
+            ;;
+        3) restart_server ;;
+        4) update_memory ;;
+        5) toggle_cronjob ;;
+        6) update_minecraft ;;
+        7)
+            if [ "$is_server_active" = true ]; then
+                screen -r mc-server
+            else
+                display_error "Invalid choice. Please enter a number from 0 to 6."
+            fi
+            ;;
+        0) exit ;;
+        *) display_error "Invalid choice. Please enter a number from 0 to 7." ;;
+        esac
+    else
+        echo -e "${CYAN}1.$NC Install"
+        echo -e "${RED}0. Exit$NC"
+        echo $'\n'
+        display_note
+        echo $'\n'
+        prompt_user "Enter your choice" choice
+        case $choice in
+        1) setup_server ;;
+        0) exit ;;
+        *) display_error "Invalid choice. Please enter a number from 0 to 1." ;;
+        esac
+    fi
+
+}
+
+function main {
     clear
     echo -e "$GREEN"
     echo -e "  _____ _                     ___ _      _____                     "
@@ -420,33 +523,15 @@ function main_menu {
     echo -e "$BLUE~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~$NC"
     server_info
     echo -e "$BLUE~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~$NC"
-    echo -e "${CYAN}1.$NC Install"
-    echo -e "${CYAN}2.$NC Uninstall"
-    echo -e "${CYAN}3.$NC Start"
-    echo -e "${CYAN}4.$NC Stop"
-    echo -e "${CYAN}5.$NC Restart"
-    echo -e "${CYAN}6.$NC Update Allocated Memory"
-    echo -e "${CYAN}7.$NC Toggle Daily Server Restart (Currently $(get_cronjob_status))"
-    echo -e "${CYAN}8.$NC Open screen (logs)"
-    echo -e "${CYAN}9.$NC Update Minecraft Server"
-    echo -e "${RED}0. Exit$NC"
-    echo $'\n'
-    display_note
-    echo $'\n'
-    prompt_user "Enter your choice" choice
-    case $choice in
-    1) setup_server ;;
-    2) uninstall_server ;;
-    3) start_server ;;
-    4) stop_server ;;
-    5) restart_server ;;
-    6) update_memory ;;
-    7) toggle_cronjob ;;
-    8) screen -r mc-server ;;
-    9) update_minecraft ;;
-    0) exit ;;
-    *) display_error "Invalid choice. Please enter a number from 1 to 6." ;;
-    esac
+    menu
+}
+
+# Function to display usage information
+function display_usage {
+    echo "Usage: $0 [options]"
+    echo "Options:"
+    echo "  -h, --help         Display help message"
+    echo "  -v, --verbose      Enable verbose logging"
 }
 
 # Check if script is run as root
@@ -455,7 +540,31 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+    -h | --help)
+        display_usage
+        exit 0
+        ;;
+    -v | --verbose)
+        verbose_mode=true
+        enable_verbose_logging
+        shift
+        ;;
+    --)
+        shift
+        break
+        ;;
+    *)
+        echo "Invalid option: $1"
+        display_usage
+        exit 1
+        ;;
+    esac
+done
+
 while true; do
-    main_menu
+    status
+    main
     read -rp "Press Enter to continue..."
 done
