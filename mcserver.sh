@@ -9,6 +9,7 @@ if [ -t 1 ]; then
     YELLOW="\033[0;33m"
     BLUE="\033[0;34m"
     CYAN="\033[0;36m"
+    white="\033[1;37m"
     NC="\033[0m" # No Color
 else
     RED=""
@@ -16,13 +17,13 @@ else
     YELLOW=""
     BLUE=""
     CYAN=""
+    white=""
     NC=""
 fi
 
 # Function to display error message and exit
 function display_error {
     echo -e "${RED}Error: $1${NC}" >&2
-    exit 1
 }
 
 # Function to prompt user for input
@@ -30,6 +31,71 @@ function prompt_user {
     local prompt_message=$1
     local variable_name=$2
     read -rp "$prompt_message: " "$variable_name"
+}
+
+# Credit: The spinner adapted from the bash-spinner project by Tasos Latsas (https://github.com/tlatsas/bash-spinner).
+function _spinner() {
+    # $1 start/stop
+    # $2 display message
+    # on stop : $3 process exit status
+    #           $4 spinner function pid (supplied from stop_spinner)
+    #           $5 err message
+
+    local on_success="✓"
+    local on_fail="✗"
+
+    case $1 in
+    start)
+        i=1
+        sp='⠏⠇⠧⠦⠴⠼⠸⠹⠙⠋'
+
+        while :; do
+            printf "\r${sp:i++%${#sp}:1} ${2}"
+            sleep 0.15
+        done
+        ;;
+    stop)
+        if [[ -z ${4} ]]; then
+            echo "spinner is not running.."
+            exit 1
+        fi
+
+        kill $4 >/dev/null 2>&1
+
+        echo -en "\r"
+        if [[ $3 -eq 0 ]]; then
+            echo -en "${GREEN}${on_success}${NC}"
+        else
+            echo -en "${RED}${on_fail}${NC}"
+        fi
+        echo -e " ${2}"
+
+        if [[ -n "${5}" ]]; then
+            echo -en "${RED}└─►"
+            echo -e " ${5}${NC}"
+        fi
+        ;;
+    *)
+        echo "invalid argument, try {start/stop}"
+        exit 1
+        ;;
+    esac
+}
+
+function start_spinner {
+    # $1 : msg to display
+    _message=$1
+    _spinner "start" "${_message}" &
+    # set global spinner pid
+    _sp_pid=$!
+    disown
+}
+
+function stop_spinner {
+    # $1 : command exit status
+    _spinner "stop" "${_message}" $1 $_sp_pid "${2}"
+    unset _message
+    unset _sp_pid
 }
 
 # Function to validate if a package is installed
@@ -42,9 +108,9 @@ function check_package_installed {
 function install_package {
     local package_name=$1
     if ! check_package_installed "$package_name"; then
-        apt-get install -y "$package_name" || display_error "Failed to install $package_name."
-    else
-        echo "$package_name is already installed. Skipping installation."
+        start_spinner "Installing $package_name"
+        apt-get install -y "$package_name" >/dev/null 2>&1
+        stop_spinner $?
     fi
 }
 
@@ -53,24 +119,24 @@ function install_or_update_java {
     local java_version=$(java -version 2>&1 | grep version | awk '{print $3}' | tr -d \")
 
     if [ -z "$java_version" ]; then
-        echo "Java not found. Installing JDK 22..."
-        wget -O /tmp/jdk-22_linux-x64_bin.deb https://download.oracle.com/java/22/latest/jdk-22_linux-x64_bin.deb
-        dpkg -i /tmp/jdk-22_linux-x64_bin.deb
+        start_spinner "Java not found. Installing JDK 22"
+        wget -O /tmp/jdk-22_linux-x64_bin.deb https://download.oracle.com/java/22/latest/jdk-22_linux-x64_bin.deb >/dev/null 2>&1
+        dpkg -i /tmp/jdk-22_linux-x64_bin.deb >/dev/null 2>&1
         rm /tmp/jdk-22_linux-x64_bin.deb
+        stop_spinner $?
     elif [[ "$java_version" != 22* ]]; then
-        echo "Java version $java_version found. Updating to JDK 22..."
-        wget -O /tmp/jdk-22_linux-x64_bin.deb https://download.oracle.com/java/22/latest/jdk-22_linux-x64_bin.deb
-        dpkg -i /tmp/jdk-22_linux-x64_bin.deb
+        start_spinner "Java version $java_version found. Updating to JDK 22"
+        wget -O /tmp/jdk-22_linux-x64_bin.deb https://download.oracle.com/java/22/latest/jdk-22_linux-x64_bin.deb >/dev/null 2>&1
+        dpkg -i /tmp/jdk-22_linux-x64_bin.deb >/dev/null 2>&1
         rm /tmp/jdk-22_linux-x64_bin.deb
-    else
-        echo "Java is already installed."
+        stop_spinner $?
     fi
 }
 
 function get_latest_version {
     local manifest_url="https://launchermeta.mojang.com/mc/game/version_manifest.json"
-    local manifest_data=$(curl -sSL "$manifest_url") || display_error "Failed to fetch version manifest JSON."
-    echo "$manifest_data" | jq -r '.latest.release' || display_error "Failed to get latest release version."
+    local manifest_data=$(curl -sSL "$manifest_url")
+    echo "$manifest_data" | jq -r '.latest.release'
 }
 
 function get_current_version {
@@ -81,49 +147,55 @@ function get_current_version {
 function get_minecraft_server_url {
     local minecraft_version=$1
     local manifest_url="https://launchermeta.mojang.com/mc/game/version_manifest.json"
-    local manifest_data=$(curl -sSL "$manifest_url") || display_error "Failed to fetch version manifest JSON."
+    local manifest_data=$(curl -sSL "$manifest_url")
 
     if [ "$minecraft_version" = "latest" ]; then
         minecraft_version="$(get_latest_version)"
     fi
 
-    local version_object=$(echo "$manifest_data" | jq --arg version "$minecraft_version" '.versions[] | select(.id == $version)') || display_error "Failed to find version object for Minecraft version $minecraft_version."
+    local version_object=$(echo "$manifest_data" | jq --arg version "$minecraft_version" '.versions[] | select(.id == $version)')
     if [ -z "$version_object" ]; then
-        display_error "Minecraft version $minecraft_version not found."
+        return 1
     fi
 
-    local version_url=$(echo "$version_object" | jq -r '.url') || display_error "Failed to get URL for Minecraft version $minecraft_version."
+    local version_url=$(echo "$version_object" | jq -r '.url')
 
-    local version_data=$(curl -sSL "$version_url") || display_error "Failed to fetch JSON data for Minecraft version $minecraft_version."
-    local server_download_url=$(echo "$version_data" | jq -r '.downloads.server.url') || display_error "Failed to extract download URL for server JAR file for Minecraft version $minecraft_version."
+    local version_data=$(curl -sSL "$version_url")
+    local server_download_url=$(echo "$version_data" | jq -r '.downloads.server.url')
 
     echo "$server_download_url"
 }
 
 # Function to check for updates and update the server JAR file
 function update_minecraft {
-    echo "Checking for updates..."
+    start_spinner "Checking for updates..."
     latest_version=$(get_latest_version)
     current_version=$(get_current_version)
+
     if [[ "$current_version" != "$latest_version" ]]; then
-        echo "New version available: $latest_version"
-        echo "Updating ..."
-        wget -O "$mcserver_dir/minecraft_server.jar" "$(get_minecraft_server_url "$latest_version")" || display_error "Failed to update server JAR file."
+        stop_spinner $?
+        start_spinner "New version available: $latest_version | Updating ..."
+        wget -O "$mcserver_dir/minecraft_server.jar" "$(get_minecraft_server_url "$latest_version")" >/dev/null 2>&1
         systemctl restart "minecraft@mcserver"
-        echo "Minecraft server file updated successfully to version $latest_version."
+        stop_spinner $?
     else
-        echo "Server JAR file is already up to date."
+        stop_spinner 1 "Server is already up to date."
     fi
 }
 
 function setup_server {
+    start_spinner "check $mcserver_dir"
     if [ -f "$mcserver_dir/minecraft_server.jar" ]; then
-        display_error "Minecraft server is already installed. Setup aborted."
+        stop_spinner 1 "Minecraft server is already installed. Setup aborted."
+        return 1
     fi
+    stop_spinner $?
 
     # Update system packages
-    apt-get update || display_error "Failed to update packages."
-    apt-get upgrade -y || display_error "Failed to upgrade packages."
+    start_spinner "apt-get update & apt-get upgrade"
+    apt-get update >/dev/null 2>&1
+    apt-get upgrade -y >/dev/null 2>&1
+    stop_spinner $?
 
     # Install required packages
     install_package "curl"
@@ -133,11 +205,11 @@ function setup_server {
     install_package "ufw"
 
     # Allow TCP connections on port 25565
+    start_spinner "Allow TCP connections on port 25565"
     if ! ufw status | grep -q "25565"; then
-        ufw allow 25565/tcp || display_error "Failed to open port 25565."
-    else
-        echo "Port 25565 is already open. Skipping port configuration."
+        ufw allow 25565/tcp
     fi
+    stop_spinner $?
 
     # Interactive setup
     prompt_user "Enter Minecraft version (default: latest)" minecraft_version
@@ -147,14 +219,23 @@ function setup_server {
     allocated_memory=${allocated_memory:-1024}
 
     # Create server directory and download server files
-    mkdir -p "$mcserver_dir" || display_error "Failed to create server directory $mcserver_dir."
-    cd "$mcserver_dir" || display_error "Failed to change directory to $mcserver_dir."
-    echo "Downloading Minecraft server version $minecraft_version..."
+    start_spinner "Downloading Minecraft server version $minecraft_version..."
+    mkdir -p "$mcserver_dir"
+    if [[ $? -eq 1 ]]; then
+        stop_spinner 1 "Failed to create server directory $mcserver_dir."
+        return 1
+    fi
+    cd "$mcserver_dir"
+
     server_download_url=$(get_minecraft_server_url "$minecraft_version")
-    wget -O minecraft_server.jar "$server_download_url" || display_error "Failed to download server files."
+    wget -O minecraft_server.jar "$server_download_url" >/dev/null 2>&1
+    if [[ $? -eq 1 ]]; then
+        stop_spinner 1 "Failed to download server files."
+        return 1
+    fi
 
     # Accept EULA
-    echo "eula=true" >eula.txt || display_error "Failed to accept EULA."
+    echo "eula=true" >eula.txt
 
     # Create systemd service unit file
     cat <<EOF >/etc/systemd/system/minecraft@mcserver.service
@@ -183,7 +264,7 @@ EOF
 
     # Reload systemd daemon and start Minecraft service
     systemctl daemon-reload
-    systemctl enable --now "minecraft@mcserver"
+    systemctl enable --now "minecraft@mcserver" >/dev/null 2>&1
 
     # Automatically restart server daily
     cat <<EOF >"$mcserver_dir/dailyrestart.sh"
@@ -209,35 +290,41 @@ screen -S "mcserver" -X stuff 'restart\r'
 systemctl restart "minecraft@mcserver"
 EOF
     chmod +x "$mcserver_dir/dailyrestart.sh"
-    echo "Minecraft server setup for $server_name completed successfully!"
+    stop_spinner $?
+    return 0
 }
 
 # Function to uninstall a server
 function uninstall_server {
-    systemctl stop "minecraft@mcserver"
-    systemctl disable --now "minecraft@mcserver"
-    rm "/etc/systemd/system/minecraft@mcserver.service"
+    start_spinner "Uninstalling ..."
+    systemctl stop "minecraft@mcserver" >/dev/null 2>&1
+    systemctl disable --now "minecraft@mcserver" >/dev/null 2>&1
+    rm "/etc/systemd/system/minecraft@mcserver.service" >/dev/null 2>&1
     screen -ls | grep "mc-server" | awk '{print $1}' | xargs -I{} screen -X -S {} quit
     rm -rf $mcserver_dir
-    echo "Minecraft server removed successfully."
+    systemctl daemon-reload
+    stop_spinner $?
 }
 
 # Function to start Minecraft server
 function start_server {
-    echo "Starting ..."
+    start_spinner "Starting ..."
     systemctl start "minecraft@mcserver"
+    stop_spinner $?
 }
 
 # Function to stop Minecraft server
 function stop_server {
-    echo "Stoping ..."
+    start_spinner "Stoping ..."
     systemctl stop "minecraft@mcserver"
+    stop_spinner $?
 }
 
 # Function to restart Minecraft server
 function restart_server {
-    echo "Restarting ..."
+    start_spinner "Restarting ..."
     systemctl restart "minecraft@mcserver"
+    stop_spinner $?
 }
 
 # Function to check status of Minecraft server
@@ -286,11 +373,13 @@ function display_note {
 function toggle_cronjob {
     local cronjob_file="${mcserver_dir}/dailyrestart.sh"
     if crontab -l | grep -q "$cronjob_file"; then
+        start_spinner "Disabling cron job ..."
         (crontab -l | grep -v "$cronjob_file") | crontab -
-        echo "cron job for disabled."
+        stop_spinner $?
     else
+        start_spinner "Enabling cron job ..."
         (crontab -l && echo "@daily /bin/bash $cronjob_file") | crontab -
-        echo "cron job for enabled."
+        stop_spinner $?
     fi
 }
 
@@ -309,13 +398,14 @@ function update_memory {
     prompt_user "Enter allocated memory in MB" allocated_memory
     allocated_memory=${allocated_memory:-1024}
 
+    start_spinner "Updating ..."
     sed -i "s/-Xmx[0-9]*M/-Xmx${allocated_memory}M/" "/etc/systemd/system/minecraft@mcserver.service"
     sed -i "s/-Xms[0-9]*M/-Xms${allocated_memory}M/" "/etc/systemd/system/minecraft@mcserver.service"
 
     systemctl daemon-reload
     systemctl restart "minecraft@mcserver"
 
-    echo "Allocated memory updated to $allocated_memory MB."
+    stop_spinner $?
 }
 
 function main_menu {
@@ -362,6 +452,7 @@ function main_menu {
 # Check if script is run as root
 if [[ $EUID -ne 0 ]]; then
     display_error "This script must be run as root."
+    exit 1
 fi
 
 while true; do
