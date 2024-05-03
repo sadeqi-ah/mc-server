@@ -4,14 +4,6 @@
 
 This Bash script facilitates the setup and management of a Minecraft server on Ubuntu/Debian. It automates tasks such as installing dependencies, downloading the Minecraft server files, configuring system services, managing server operations, and more.
 
-## Features
-
-- Interactive setup process for easy configuration.
-- Automatic installation of required packages.
-- Management of server start, stop, and restart.
-- Automated daily server restart.
-- Integrated with systemd for service management.
-
 ## Prerequisites
 
 - Root access or sudo privileges.
