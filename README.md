@@ -1,5 +1,7 @@
 # MC Server
 
+![MC Server](./screenshots/main-menu.png)
+
 This Bash script facilitates the setup and management of a Minecraft server on Ubuntu/Debian. It automates tasks such as installing dependencies, downloading the Minecraft server files, configuring system services, managing server operations, and more.
 
 ## Features
@@ -49,6 +51,10 @@ Follow the on-screen instructions to perform the desired actions.
 ## License
 
 This repo is released under the [MIT License](LICENSE).
+
+## Credit
+
+The spinner used in this script is adapted from the [bash-spinner](https://github.com/tlatsas/bash-spinner) by Tasos Latsas.
 
 ## Contributions
 
