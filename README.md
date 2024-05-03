@@ -33,21 +33,6 @@ This Bash script facilitates the setup and management of a Minecraft server on U
 
 Follow the on-screen prompts to set up and configure your Minecraft server.
 
-## Usage
-
-- When running the script, you'll be presented with a menu offering various options:
-  - Install: Setup a new Minecraft server.
-  - Uninstall: Remove an existing Minecraft server.
-  - Start: Start the Minecraft server.
-  - Stop: Stop the Minecraft server.
-  - Restart: Restart the Minecraft server.
-  - Update Allocated Memory: Modify the allocated memory for the server.
-  - Toggle Daily Server Restart: Enable or disable automatic daily server restart.
-  - Open screen (logs): Access the server logs using screen.
-  - Exit: Terminate the script.
-
-Follow the on-screen instructions to perform the desired actions.
-
 ## License
 
 This repo is released under the [MIT License](LICENSE).
