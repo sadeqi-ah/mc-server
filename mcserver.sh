@@ -2,6 +2,8 @@
 
 mcserver_dir="/opt/minecraft"
 verbose_mode=false
+manifest_url="https://launchermeta.mojang.com/mc/game/version_manifest.json"
+jdk_url=https://download.oracle.com/java/22/latest/jdk-22_linux-x64_bin.deb
 
 if [ -t 1 ]; then
     # Define colors
@@ -38,8 +40,32 @@ function display_error {
 # Function to prompt user for input
 function prompt_user {
     local prompt_message=$1
-    local variable_name=$2
-    read -rp "$prompt_message: " "$variable_name"
+    local prompt_info_message=$2
+    local variable_name=$3
+    local default_value=$4
+    local validation_regex=$5
+    local error_message=$6
+
+    while true; do
+        echo -en "${GREEN}$prompt_message"
+        if [ "$prompt_info_message" = "" ]; then
+            echo -en ":${NC} "
+        else
+            echo -en "${NC} ${YELLOW}$prompt_info_message:${NC} "
+        fi
+        read "$variable_name"
+
+        local input=${!variable_name:-$default_value}
+        if [[ ! $input =~ $validation_regex ]]; then
+            display_error "$error_message"
+        else
+            break
+        fi
+    done
+
+    if [ -z "${!variable_name}" ]; then
+        eval "$variable_name=\"$default_value\""
+    fi
 }
 
 # Credit: The spinner adapted from the bash-spinner project by Tasos Latsas (https://github.com/tlatsas/bash-spinner).
@@ -143,13 +169,13 @@ function install_or_update_java {
 
     if [ -z "$java_version" ]; then
         start_spinner "Java not found. Installing JDK 22"
-        execute wget -O /tmp/jdk-22_linux-x64_bin.deb https://download.oracle.com/java/22/latest/jdk-22_linux-x64_bin.deb
+        execute wget -O /tmp/jdk-22_linux-x64_bin.deb "${jdk_url}"
         execute dpkg -i /tmp/jdk-22_linux-x64_bin.deb
         execute rm /tmp/jdk-22_linux-x64_bin.deb
         stop_spinner $?
     elif [[ "$java_version" != 22* ]]; then
         start_spinner "Java version $java_version found. Updating to JDK 22"
-        execute wget -O /tmp/jdk-22_linux-x64_bin.deb https://download.oracle.com/java/22/latest/jdk-22_linux-x64_bin.deb
+        execute wget -O /tmp/jdk-22_linux-x64_bin.deb "${jdk_url}"
         execute dpkg -i /tmp/jdk-22_linux-x64_bin.deb
         execute rm /tmp/jdk-22_linux-x64_bin.deb
         stop_spinner $?
@@ -157,7 +183,6 @@ function install_or_update_java {
 }
 
 function get_latest_version {
-    local manifest_url="https://launchermeta.mojang.com/mc/game/version_manifest.json"
     local manifest_data=$(curl -sSL "$manifest_url")
     echo "$manifest_data" | jq -r '.latest.release'
 }
@@ -169,7 +194,6 @@ function get_current_version {
 # Function to get the Minecraft server download URL for a specific version or the latest version
 function get_minecraft_server_url {
     local minecraft_version=$1
-    local manifest_url="https://launchermeta.mojang.com/mc/game/version_manifest.json"
     local manifest_data=$(curl -sSL "$manifest_url")
 
     if [ "$minecraft_version" = "latest" ]; then
@@ -225,21 +249,36 @@ function setup_server {
     install_package "jq"
     install_or_update_java
     install_package "screen"
-    install_package "ufw"
-
-    # Allow TCP connections on port 25565
-    start_spinner "Allow TCP connections on port 25565"
-    if ! ufw status | grep -q "25565"; then
-        execute ufw allow 25565/tcp
-    fi
-    stop_spinner $?
 
     # Interactive setup
-    prompt_user "Enter minecraft version (default: latest)" minecraft_version
-    minecraft_version=${minecraft_version:-"latest"}
+    prompt_user "Enter minecraft version" "(default: latest)" minecraft_version latest '^.*$' "Invalid input."
+    prompt_user "Online mode?" "(Y/n)" online_mode y '^[yYnN]$' "Invalid input. Must be y or n."
+    online_mode=${online_mode,,}
+    if [ "$online_mode" = "y" ]; then
+        online_mode=true
+    else
+        online_mode=false
+    fi
 
-    prompt_user "Enter allocated memory (in MB, default: 1024)" allocated_memory
-    allocated_memory=${allocated_memory:-1024}
+    prompt_user "Enter difficulty level" "(1 for easy, 2 for normal, 3 for hard, 4 for hardcore, default: 3)" difficulty_choice 3 '^[1-4]$' "Invalid input. Difficulty level must be between 1 and 4."
+    case $difficulty_choice in
+    1) difficulty="easy" ;;
+    2) difficulty="normal" ;;
+    3) difficulty="hard" ;;
+    4) difficulty="hardcore" ;;
+    esac
+
+    if [ "$difficulty" = "hardcore" ]; then
+        difficulty="hard"
+        is_hardcore=true
+    else
+        is_hardcore=false
+    fi
+
+    prompt_user "Enter maximum players" "(default: 20)" max_players 20 '^[0-9]+$' "Invalid input. Maximum players must be a number."
+    prompt_user "Enter view distance" "(default: 10)" view_distance 10 '^(3[0-2]|[3-9]|[1-2][0-9])$' "Invalid input. View distance must be between 3 and 32."
+    prompt_user "Enter server port" "(default: 25565)" server_port 25565 '^[0-9]+$' "Invalid input. Server port must be a number."
+    prompt_user "Enter allocated memory" "(in MB, default: 1024)" allocated_memory 1024 '^[0-9]+$' "Invalid input. Allocated memory must be a number."
 
     # Create server directory and download server files
     start_spinner "Downloading minecraft server version $minecraft_version..."
@@ -249,7 +288,6 @@ function setup_server {
         return 1
     fi
     cd "$mcserver_dir"
-
     server_download_url=$(get_minecraft_server_url "$minecraft_version")
     execute wget -O minecraft_server.jar "$server_download_url"
     if [[ $? -eq 1 ]]; then
@@ -259,6 +297,71 @@ function setup_server {
 
     # Accept EULA
     echo "eula=true" >eula.txt
+
+    #Create server properties file
+    cat <<EOF >server.properties
+#Minecraft server properties
+accepts-transfers=false
+allow-flight=false
+allow-nether=true
+broadcast-console-to-ops=true
+broadcast-rcon-to-ops=true
+difficulty=$difficulty
+enable-command-block=false
+enable-jmx-monitoring=false
+enable-query=false
+enable-rcon=false
+enable-status=true
+enforce-secure-profile=true
+enforce-whitelist=false
+entity-broadcast-range-percentage=100
+force-gamemode=false
+function-permission-level=2
+gamemode=survival
+generate-structures=true
+generator-settings={}
+hardcore=$is_hardcore
+hide-online-players=false
+initial-disabled-packs=
+initial-enabled-packs=vanilla
+level-name=world
+level-seed=
+level-type=minecraft\:normal
+log-ips=true
+max-chained-neighbor-updates=1000000
+max-players=$max_players
+max-tick-time=60000
+max-world-size=29999984
+motd=A Minecraft Server
+network-compression-threshold=256
+online-mode=$online_mode
+op-permission-level=4
+player-idle-timeout=0
+prevent-proxy-connections=false
+pvp=true
+query.port=25565
+rate-limit=0
+rcon.password=
+rcon.port=25575
+region-file-compression=deflate
+require-resource-pack=false
+resource-pack=
+resource-pack-id=
+resource-pack-prompt=
+resource-pack-sha1=
+server-ip=
+server-port=$server_port
+simulation-distance=10
+spawn-animals=true
+spawn-monsters=true
+spawn-npcs=true
+spawn-protection=16
+sync-chunk-writes=true
+text-filtering-config=
+use-native-transport=true
+view-distance=$view_distance
+white-list=false
+EOF
 
     # Create systemd service unit file
     cat <<EOF >/etc/systemd/system/minecraft@mcserver.service
@@ -436,7 +539,7 @@ function get_cronjob_status {
 
 # Function to update allocated memory
 function update_memory {
-    prompt_user "Enter allocated memory in MB" allocated_memory
+    prompt_user "Enter allocated memory in MB" "" allocated_memory
     allocated_memory=${allocated_memory:-1024}
 
     start_spinner "Updating ..."
@@ -471,7 +574,7 @@ function menu {
         echo $'\n'
         display_note
         echo $'\n'
-        prompt_user "Enter your choice" choice
+        prompt_user "Enter your choice" "" choice
         case $choice in
         1) uninstall_server ;;
         2)
@@ -501,7 +604,7 @@ function menu {
         echo $'\n'
         display_note
         echo $'\n'
-        prompt_user "Enter your choice" choice
+        prompt_user "Enter your choice" "" choice
         case $choice in
         1) setup_server ;;
         0) exit ;;
