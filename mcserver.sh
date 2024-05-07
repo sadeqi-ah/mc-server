@@ -5,6 +5,8 @@ verbose_mode=false
 manifest_url="https://launchermeta.mojang.com/mc/game/version_manifest.json"
 jdk_url=https://download.oracle.com/java/22/latest/jdk-22_linux-x64_bin.deb
 
+export DEBIAN_FRONTEND=noninteractive
+
 if [ -t 1 ]; then
     # Define colors
     RED="\033[0;31m"
@@ -247,6 +249,7 @@ function setup_server {
     # Install required packages
     install_package "curl"
     install_package "jq"
+    install_package "unzip"
     install_or_update_java
     install_package "screen"
 
